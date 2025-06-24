@@ -1,0 +1,32 @@
+# ==============================================================
+# Main Playbook: main.yml
+# Version:        1.0.0
+# Last Updated:   2025-06-20
+# Author:         
+#
+# Description:
+#   This is the entry point playbook. It orchestrates the full
+#   environment setup by including several task-specific playbooks.
+#
+# Included Playbooks:
+#   - install_dependencies.yml     → Install base system packages
+#   - install_docker.yml           → Install Docker and Docker Compose
+#   - install_awscli.yml           → Install AWS CLI v2
+#   - install_prometheus.yml       → Install and configure Prometheus
+#   - verify_installation.yml      → Perform post-installation checks
+# ==============================================================
+
+# Step 1: Install system-level dependencies (e.g. curl, unzip)
+- import_playbook: install_dependencies.yml
+
+# Step 2: Install Docker and Docker Compose
+- import_playbook: install_docker.yml
+
+# Step 3: Install AWS CLI v2
+- import_playbook: install_awscli.yml
+
+# Step 4: Install and configure Prometheus monitoring tool
+- import_playbook: install_prometheus.yml
+
+# Step 5: Verify that all components are properly installed
+- import_playbook: verify_installation.yml

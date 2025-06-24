@@ -1,0 +1,56 @@
+# ============================================================== #
+# Playbook: install_docker.yml
+# Version:        1.0.0
+# Last Updated:   2025-06-20
+# Author:
+#
+# Description:
+#   This playbook installs Docker Engine, CLI, containerd,
+#   Buildx, and Docker Compose plugin on Ubuntu systems.
+# ============================================================== #
+
+- name: Install Docker
+  hosts: all
+  become: true
+
+  vars:
+    docker_packages:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+
+  tasks:
+
+    # Ensure the keyrings directory exists for GPG keys
+    - name: Create directory for Docker GPG key
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    # Download Docker's official GPG key
+    - name: Download Docker GPG key
+      get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: '0644'
+
+    # Add Docker's APT repository to sources list
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch={{ ansible_architecture }} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_lsb.codename }} stable"
+        state: present
+        filename: docker
+
+    # Update APT package cache after adding Docker repository
+    - name: Update apt after adding Docker repo
+      apt:
+        update_cache: yes
+
+    # Install Docker packages defined in variable list
+    - name: Install Docker packages
+      apt:
+        name: "{{ docker_packages }}"
+        state: present

@@ -1,0 +1,261 @@
+# ==============================================================
+# Playbook: check_updates.yml
+# Version:        1.0.2
+# Last Updated:   2025-06-20
+# Author:
+#
+# Description:
+#   This playbook checks installed versions of Docker, AWS CLI,
+#   and Prometheus (running in Docker container),
+#   compares them with the latest available versions,
+#   and offers to update them interactively if updates are available.
+# ==============================================================
+
+- name: Check and update installed software stack
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    docker_packages:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+
+  tasks:
+
+    # -------- Docker -------- #
+
+    # Check installed Docker version by running 'docker --version'
+    - name: Check Docker version
+      command: docker --version
+      register: docker_version
+      ignore_errors: yes
+
+    # Inform if Docker is not installed, so update steps will be skipped
+    - name: Docker not installed message
+      debug:
+        msg: "Docker is not installed, skipping update."
+      when: docker_version.rc != 0
+
+    # Extract the Docker version number from the command output
+    - name: Extract Docker version
+      set_fact:
+        docker_local_version: "{{ docker_version.stdout | regex_search('version ([0-9\\.]+)', '\\1') }}"
+      when: docker_version.rc == 0
+
+    # Retrieve available Docker versions from apt package cache
+    - name: Get Docker versions list from apt-cache
+      command: apt-cache madison docker-ce
+      register: docker_apt_cache
+      changed_when: false
+      when: docker_version.rc == 0
+
+    # Parse the latest Docker version from apt-cache output
+    - name: Set latest Docker version from apt-cache output
+      set_fact:
+        docker_latest_version: "{{ docker_apt_cache.stdout_lines[0].split('|')[1] | trim }}"
+      when: docker_version.rc == 0 and docker_apt_cache.stdout_lines | length > 0
+
+    # Message if Docker is already at the latest version
+    - name: Docker is up-to-date message
+      debug:
+        msg: "Docker version {{ docker_local_version }} is the latest. No update required."
+      when:
+        - docker_version.rc == 0
+        - docker_local_version is version(docker_latest_version, '>=')
+
+    # Prompt user to confirm Docker update if a newer version is available
+    - name: Ask for Docker update confirmation
+      pause:
+        prompt: "Docker update available. Update from {{ docker_local_version }} to {{ docker_latest_version }}? (yes/no)"
+      register: docker_update_confirm
+      when:
+        - docker_version.rc == 0
+        - docker_local_version is version(docker_latest_version, '<')
+
+    # Update Docker packages to latest version via apt if user confirms
+    - name: Update Docker packages
+      apt:
+        name: "{{ docker_packages }}"
+        state: latest
+        update_cache: yes
+      when:
+        - docker_version.rc == 0
+        - docker_local_version is version(docker_latest_version, '<')
+        - docker_update_confirm.user_input | default('no') | lower == 'yes'
+
+    # -------- AWS CLI -------- #
+
+    # Check installed AWS CLI version by running 'aws --version'
+    - name: Check AWS CLI version
+      command: aws --version
+      register: awscli_version
+      ignore_errors: yes
+
+    # Inform if AWS CLI is not installed
+    - name: AWS CLI not installed message
+      debug:
+        msg: "AWS CLI is not installed, skipping update."
+      when: awscli_version.rc != 0
+
+    # Extract AWS CLI version number from command output
+    - name: Extract AWS CLI version
+      set_fact:
+        awscli_local_version: "{{ awscli_version.stdout | regex_search('aws-cli/([0-9\\.]+)', '\\1') }}"
+      when: awscli_version.rc == 0
+
+    # Fetch latest AWS CLI version from GitHub API
+    - name: Get latest AWS CLI version from GitHub
+      uri:
+        url: https://api.github.com/repos/aws/aws-cli/releases/latest
+        return_content: yes
+      register: awscli_latest_response
+      when: awscli_version.rc == 0
+
+    # Parse latest AWS CLI version tag from JSON response
+    - name: Parse latest AWS CLI version
+      set_fact:
+        awscli_latest_version: "{{ awscli_latest_response.json.tag_name | regex_replace('^v', '') }}"
+      when: awscli_version.rc == 0
+
+    # Inform if AWS CLI is already at the latest version
+    - name: AWS CLI is up-to-date message
+      debug:
+        msg: "AWS CLI version {{ awscli_local_version }} is the latest. No update required."
+      when:
+        - awscli_version.rc == 0
+        - awscli_local_version is version(awscli_latest_version, '>=')
+
+    # Prompt user to confirm AWS CLI update if newer version is available
+    - name: Ask for AWS CLI update confirmation
+      pause:
+        prompt: "AWS CLI update available. Update from {{ awscli_local_version }} to {{ awscli_latest_version }}? (yes/no)"
+      register: awscli_update_confirm
+      when:
+        - awscli_version.rc == 0
+        - awscli_local_version is version(awscli_latest_version, '<')
+
+    # Download, unzip, install AWS CLI v2 and clean up if update confirmed
+    - name: Install or update AWS CLI
+      block:
+        # Download the AWS CLI v2 zip archive to /tmp
+        - get_url:
+            url: "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
+            dest: /tmp/awscliv2.zip
+            mode: '0644'
+
+        # Extract the downloaded archive
+        - unarchive:
+            src: /tmp/awscliv2.zip
+            dest: /tmp
+            remote_src: yes
+
+        # Run the AWS CLI installation script with update flag
+        - command: ./aws/install --update
+          args:
+            chdir: /tmp
+
+        # Remove temporary installation files to keep system clean
+        - file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /tmp/awscliv2.zip
+            - /tmp/aws
+      when:
+        - awscli_version.rc == 0
+        - awscli_local_version is version(awscli_latest_version, '<')
+        - awscli_update_confirm.user_input | lower == 'yes'
+
+    # -------- Prometheus (Docker container) -------- #
+
+    # Check if Prometheus container named 'prometheus' is running
+    - name: Check if Prometheus container is running
+      docker_container_info:
+        name: prometheus
+      register: prometheus_container_info
+      ignore_errors: yes
+
+    # Inform if Prometheus container is not running and skip update
+    - name: Prometheus container not running message
+      debug:
+        msg: "Prometheus container is not running, skipping update."
+      when: prometheus_container_info.failed or prometheus_container_info.container is not defined
+
+    # Check Prometheus version inside the running container
+    - name: Check Prometheus version inside container
+      command: docker exec prometheus prometheus --version
+      register: prometheus_version
+      failed_when: false
+      changed_when: false
+      when: prometheus_container_info.container is defined
+
+    # Extract Prometheus version from the container command output
+    - name: Extract Prometheus version from container output
+      set_fact:
+        prometheus_local_version: "{{ prometheus_version.stdout | regex_search('version=\"([0-9\\.]+)\"', '\\1') }}"
+      when: prometheus_version.rc == 0 and prometheus_container_info.container is defined
+
+    # Get latest Prometheus release version from GitHub API
+    - name: Get latest Prometheus version from GitHub
+      uri:
+        url: https://api.github.com/repos/prometheus/prometheus/releases/latest
+        return_content: yes
+      register: prometheus_latest_response
+      when: prometheus_local_version is defined
+
+    # Parse latest Prometheus version tag from JSON response
+    - name: Parse latest Prometheus version
+      set_fact:
+        prometheus_latest_version: "{{ prometheus_latest_response.json.tag_name | regex_replace('^v', '') }}"
+      when: prometheus_latest_response is defined
+
+    # Inform if Prometheus in container is already at latest version
+    - name: Prometheus is up-to-date message
+      debug:
+        msg: "Prometheus version {{ prometheus_local_version }} in container is the latest. No update required."
+      when:
+        - prometheus_local_version is defined
+        - prometheus_latest_version is defined
+        - prometheus_local_version is version(prometheus_latest_version, '>=')
+
+    # Prompt user to confirm Prometheus update if newer version is available
+    - name: Ask for Prometheus update confirmation
+      pause:
+        prompt: "Prometheus update available. Update from {{ prometheus_local_version }} to {{ prometheus_latest_version }}? (yes/no)"
+      register: prometheus_update_confirm
+      when:
+        - prometheus_local_version is defined
+        - prometheus_latest_version is defined
+        - prometheus_local_version is version(prometheus_latest_version, '<')
+
+    # Pull latest Prometheus Docker image from Docker Hub if update confirmed
+    - name: Pull latest Prometheus Docker image
+      command: docker pull prom/prometheus:latest
+      when:
+        - prometheus_update_confirm.user_input | default('no') | lower == 'yes'
+
+    # Stop and remove the existing Prometheus container before updating
+    - name: Stop and remove Prometheus container
+      docker_container:
+        name: prometheus
+        state: absent
+      when:
+        - prometheus_update_confirm.user_input | default('no') | lower == 'yes'
+
+    # Start Prometheus container with the latest image, mounting config and exposing port 9090
+    - name: Start Prometheus container with latest image
+      docker_container:
+        name: prometheus
+        image: prom/prometheus:latest
+        state: started
+        restart_policy: always
+        ports:
+          - "9090:9090"
+        volumes:
+          - /opt/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      when:
+        - prometheus_update_confirm.user_input | default('no') | lower == 'yes'

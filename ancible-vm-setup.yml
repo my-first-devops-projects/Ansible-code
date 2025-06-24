@@ -1,0 +1,125 @@
+---
+- name: Install Docker and AWS CLI with verification
+  hosts: all
+  become: true
+
+  vars:
+    docker_packages:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+
+  tasks:
+    # -------------------- Install Dependencies --------------------
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install required packages
+      apt:
+        name:
+          - unzip
+          - curl
+          - ca-certificates
+        state: present
+
+    # -------------------- Install Docker --------------------
+
+    - name: Create directory for Docker GPG key
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Download Docker GPG key
+      get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: '0644'
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch={{ ansible_architecture }} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_lsb.codename }} stable"
+        state: present
+        filename: docker
+
+    - name: Update apt after adding Docker repo
+      apt:
+        update_cache: yes
+
+    - name: Install Docker packages
+      apt:
+        name: "{{ docker_packages }}"
+        state: present
+
+    # -------------------- Install AWS CLI --------------------
+
+    - name: Download AWS CLI v2 archive
+      get_url:
+        url: https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+        dest: /tmp/awscliv2.zip
+
+    - name: Unzip AWS CLI archive
+      unarchive:
+        src: /tmp/awscliv2.zip
+        dest: /tmp
+        remote_src: yes
+
+    - name: Install AWS CLI
+      command: ./aws/install
+      args:
+        chdir: /tmp
+      register: awscli_install
+      failed_when: awscli_install.rc != 0 and 'already exists' not in awscli_install.stdout
+
+    - name: Clean up AWS CLI temporary files
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/awscliv2.zip
+        - /tmp/aws
+
+    # -------------------- Verification Summary --------------------
+
+    - name: Check if Docker is installed
+      command: docker --version
+      register: docker_check
+      ignore_errors: yes
+
+    - name: Check if AWS CLI is installed
+      command: aws --version
+      register: awscli_check
+      ignore_errors: yes
+
+    - name: Show Docker installation status
+      debug:
+        msg: "Docker is installed: {{ docker_check.stdout }}"
+      when: docker_check.rc == 0
+
+    - name: Warn if Docker is not installed
+      debug:
+        msg: "Docker is NOT installed!"
+      when: docker_check.rc != 0
+
+    - name: Show AWS CLI installation status
+      debug:
+        msg: "AWS CLI is installed: {{ awscli_check.stdout }}"
+      when: awscli_check.rc == 0
+
+    - name: Warn if AWS CLI is not installed
+      debug:
+        msg: "AWS CLI is NOT installed!"
+      when: awscli_check.rc != 0
+
+    - name: Final status message
+      debug:
+        msg: >
+          {% if docker_check.rc == 0 and awscli_check.rc == 0 %}
+            Installation complete.
+          {% else %}
+            Installation failed for one or more components.
+          {% endif %}

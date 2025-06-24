@@ -1,0 +1,31 @@
+# ============================================================== #
+# Playbook: install_dependencies.yml
+# Version:        1.0.0
+# Last Updated:   2025-06-20
+# Author:
+#
+# Description:
+#   This playbook installs essential system-level dependencies
+#   required for subsequent provisioning steps such as Docker,
+#   AWS CLI, and Prometheus.
+# ============================================================== #
+
+- name: Install system dependencies
+  hosts: all
+  become: true
+
+  tasks:
+
+    # Update the local APT package index
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    # Install required system packages
+    - name: Install required packages
+      apt:
+        name:
+          - unzip            # Used to extract zip archives
+          - curl             # Tool for transferring data over HTTP(S)
+          - ca-certificates  # Provides trusted SSL certificates
+        state: present

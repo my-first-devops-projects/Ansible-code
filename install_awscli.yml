@@ -1,0 +1,47 @@
+# ==============================================================
+# Playbook: install_awscli.yml
+# Version:        1.0.0
+# Last Updated:   2025-06-20
+# Author:
+#
+# Description:
+#   This playbook downloads, installs, and cleans up AWS CLI v2
+#   on the target hosts.
+# ==============================================================
+
+- name: Install AWS CLI
+  hosts: all
+  become: true
+
+  tasks:
+
+    # Download the AWS CLI v2 zip archive to /tmp
+    - name: Download AWS CLI v2 archive
+      get_url:
+        url: https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+        dest: /tmp/awscliv2.zip
+
+    # Extract the downloaded AWS CLI archive in /tmp
+    - name: Unzip AWS CLI archive
+      unarchive:
+        src: /tmp/awscliv2.zip
+        dest: /tmp
+        remote_src: yes
+
+    # Run the AWS CLI installation script
+    - name: Install AWS CLI
+      command: ./aws/install
+      args:
+        chdir: /tmp
+      register: awscli_install
+      # Ignore failure if AWS CLI is already installed
+      failed_when: awscli_install.rc != 0 and 'already exists' not in awscli_install.stdout
+
+    # Remove temporary installation files to clean up
+    - name: Clean up AWS CLI temporary files
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/awscliv2.zip
+        - /tmp/aws

@@ -1,0 +1,65 @@
+# ==============================================================
+# Playbook: install_prometheus.yml
+# Version:        1.0.0
+# Last Updated:   2025-06-20
+# Author:
+#
+# Description:
+#   This playbook deploys Prometheus monitoring tool using Docker.
+#   It creates necessary config directory and files, runs the
+#   Prometheus container, and verifies the container status.
+# ==============================================================
+
+- name: Install Prometheus via Docker
+  hosts: all
+  become: true
+
+  vars:
+    prometheus_container_name: prometheus
+    prometheus_image: prom/prometheus:latest
+    prometheus_config_dir: /opt/prometheus
+
+  tasks:
+
+    # Create directory for Prometheus configuration
+    - name: Create Prometheus config directory
+      file:
+        path: "{{ prometheus_config_dir }}"
+        state: directory
+        mode: '0755'
+
+    # Create a basic Prometheus configuration file
+    - name: Create basic Prometheus config file
+      copy:
+        dest: "{{ prometheus_config_dir }}/prometheus.yml"
+        content: |
+          global:
+            scrape_interval: 15s
+
+          scrape_configs:
+            - job_name: 'prometheus'
+              static_configs:
+                - targets: ['localhost:9090']
+
+    # Run the Prometheus Docker container with specified config and ports
+    - name: Run Prometheus container
+      docker_container:
+        name: "{{ prometheus_container_name }}"
+        image: "{{ prometheus_image }}"
+        state: started
+        restart_policy: always
+        ports:
+          - "9090:9090"
+        volumes:
+          - "{{ prometheus_config_dir }}/prometheus.yml:/etc/prometheus/prometheus.yml"
+
+    # Retrieve information about the Prometheus container
+    - name: Check Prometheus container status
+      docker_container_info:
+        name: "{{ prometheus_container_name }}"
+      register: prometheus_info
+
+    # Display a message confirming Prometheus is running with container ID
+    - name: Show Prometheus container state
+      debug:
+        msg: "Prometheus is running. ID: {{ prometheus_info.container.Id[:12] }}"

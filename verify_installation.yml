@@ -1,0 +1,73 @@
+# ==============================================================
+# Playbook: verify_installation.yml
+# Version:        1.0.0
+# Last Updated:   2025-06-20
+# Author:
+#
+# Description:
+#   This playbook performs a final verification of the installed
+#   tools (Docker, AWS CLI, Prometheus) by checking their versions
+#   and operational status.
+# ==============================================================
+
+- name: Final Verification of Installed Tools
+  hosts: all
+  become: false
+  gather_facts: false
+
+  vars:
+    docker_status: "unknown"
+    awscli_status: "unknown"
+    prometheus_status: "unknown"
+    docker_version: "N/A"
+    awscli_version: "N/A"
+
+  tasks:
+
+    # Check installed Docker version
+    - name: Check Docker version
+      command: docker --version
+      register: docker_check
+      ignore_errors: true
+
+    # Set facts for Docker status and version based on command result
+    - name: Set Docker status and version
+      set_fact:
+        docker_status: "{{ 'installed' if docker_check.rc == 0 else 'NOT installed' }}"
+        docker_version: "{{ docker_check.stdout | regex_search('Docker version ([^,]+)', '\\1') if docker_check.rc == 0 else 'N/A' }}"
+
+    # Check installed AWS CLI version
+    - name: Check AWS CLI version
+      command: aws --version
+      register: awscli_check
+      ignore_errors: true
+
+    # Set facts for AWS CLI status and version based on command result
+    - name: Set AWS CLI status and version
+      set_fact:
+        awscli_status: "{{ 'installed' if awscli_check.rc == 0 else 'NOT installed' }}"
+        awscli_version: "{{ awscli_check.stdout | regex_search('aws-cli/([0-9\\.]+)', '\\1') if awscli_check.rc == 0 else 'N/A' }}"
+
+    # Check if Prometheus is reachable on localhost:9090
+    - name: Check if Prometheus is running on port 9090
+      uri:
+        url: http://localhost:9090/-/ready
+        method: GET
+        return_content: yes
+        status_code: 200
+      register: prometheus_response
+      ignore_errors: true
+
+    # Set Prometheus status based on HTTP response status code
+    - name: Set Prometheus status
+      set_fact:
+        prometheus_status: "{{ 'running' if prometheus_response.status == 200 else 'NOT running' }}"
+
+    # Print a summary of installation statuses and versions
+    - name: Final summary
+      debug:
+        msg: |
+          ==== INSTALLATION SUMMARY ====
+          Docker: {{ docker_status }} (version: {{ docker_version }})
+          AWS CLI: {{ awscli_status }} (version: {{ awscli_version }})
+          Prometheus: {{ prometheus_status }}
